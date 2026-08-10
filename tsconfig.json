@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    /* Language & module output */
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    // node16 + "type": "commonjs" in package.json emits CommonJS, and is the
+    // resolution mode TypeScript 6 expects (plain "node" is deprecated).
+    "module": "node16",
+    "moduleResolution": "node16",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+
+    /* The Prisma 7 client is generated as TypeScript with explicit `.ts`
+       import specifiers, so we allow those and let tsc rewrite them to `.js`
+       in the emitted JavaScript. */
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+
+    /* Emit */
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "sourceMap": true,
+    "declaration": false,
+
+    /* Type checking — strict on purpose, it is the whole point of TypeScript */
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

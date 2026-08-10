@@ -1,0 +1,18 @@
+{
+  // Type-checks everything, including files that are run with tsx and never
+  // compiled (the Prisma seed, the Prisma config). `npm run typecheck`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  // `api/` is the Vercel entry point. It is bundled by the platform rather
+  // than by our `tsc` build, so this is the only place it gets type-checked.
+  "include": [
+    "src/**/*.ts",
+    "api/**/*.ts",
+    "prisma/**/*.ts",
+    "prisma.config.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

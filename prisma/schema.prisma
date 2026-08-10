@@ -1,0 +1,491 @@
+// Omomoom database schema.
+//
+// Designed for the new product, not copied from Base44. Their export is a
+// content source only; this shape is what the new site and admin panel need.
+//
+// After editing run:  npm run db:migrate
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+  previewFeatures = ["relationJoins"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ===========================================================================
+// Enums
+// ===========================================================================
+
+enum Role {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+/// Is the listing publicly visible?
+enum RestaurantStatus {
+  DRAFT // imported but unverified, or created by an admin and not finished
+  PUBLISHED
+  HIDDEN // deliberately taken down
+}
+
+/// Where a listing sits in the claim lifecycle.
+enum ClaimState {
+  UNCLAIMED
+  PENDING
+  CLAIMED
+}
+
+enum PriceTier {
+  ONE // $
+  TWO // $$
+  THREE // $$$
+  FOUR // $$$$
+}
+
+/// Michelin distinction. Kept separate from tags because it is a formal award
+/// with a fixed vocabulary, and it sorts.
+enum MichelinRating {
+  SELECTED
+  BIB_GOURMAND
+  ONE_STAR
+  TWO_STARS
+  THREE_STARS
+}
+
+/// One table serves every taxonomy. Adding a new facet is an enum value plus
+/// rows, not a new table, a new join table and a new admin screen.
+enum TagType {
+  CUISINE // Italian, Japanese, Peruvian
+  DISH // Sushi, Tacos, Pasta
+  DIETARY // Vegan, Gluten-free, Halal
+  FEATURE // Outdoor seating, Live music, Waterfront
+  OCCASION // Date night, Business lunch, Brunch
+  DRINK // Cocktails, Wine, Sake
+  SERVICE // Dine-in, Takeout, Delivery
+  PARKING // Valet, Street parking
+  VIBE // Casual, Upscale, Trendy
+  EDITORIAL // Hidden gem, Local favourite, Worth the drive
+}
+
+enum PhotoRole {
+  GALLERY
+  COVER
+  LOGO
+}
+
+enum PhotoStatus {
+  PENDING // uploaded by an owner, awaiting admin approval
+  APPROVED
+  REJECTED
+}
+
+enum PhotoSource {
+  IMPORT
+  TEAM
+  OWNER
+  USER
+}
+
+/// State of an owner's unpublished edits. See Restaurant.pendingChanges.
+enum PendingStatus {
+  NONE
+  DRAFT // owner is still editing
+  SUBMITTED // waiting on an admin
+  REJECTED // admin sent it back, edits retained
+}
+
+enum ClaimStatus {
+  PENDING
+  VERIFIED
+  APPROVED
+  REJECTED
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+}
+
+// ===========================================================================
+// Geography
+// ===========================================================================
+
+/// A market, not a municipality. Miami covers Miami Beach, Coral Gables and
+/// the rest; the municipality is stored on the restaurant. Modelled from day
+/// one because retrofitting a city dimension later is a rewrite.
+model City {
+  id       String  @id @default(uuid(7))
+  name     String
+  slug     String  @unique
+  state    String?
+  country  String  @default("US")
+  timezone String  @default("America/New_York")
+  isActive Boolean @default(true)
+
+  neighborhoods Neighborhood[]
+  restaurants   Restaurant[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("cities")
+}
+
+model Neighborhood {
+  id     String @id @default(uuid(7))
+  cityId String
+  city   City   @relation(fields: [cityId], references: [id], onDelete: Cascade)
+
+  name      String
+  slug      String
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  restaurants Restaurant[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cityId, slug])
+  @@index([cityId, isActive])
+  @@map("neighborhoods")
+}
+
+// ===========================================================================
+// Taxonomy
+// ===========================================================================
+
+model Tag {
+  id    String  @id @default(uuid(7))
+  type  TagType
+  name  String
+  slug  String
+  /// Optional decoration carried over from the source data, e.g. "🍣".
+  emoji String?
+  /// Two letter origin code for cuisines, e.g. "JP". Blank where meaningless.
+  code  String?
+
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  /// Copy for the tag's future landing page ("Best Sushi in Miami").
+  seoTitle       String?
+  seoDescription String?
+
+  restaurants RestaurantTag[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([type, slug])
+  @@index([type, isActive, sortOrder])
+  @@map("tags")
+}
+
+model RestaurantTag {
+  restaurantId String
+  tagId        String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  tag          Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([restaurantId, tagId])
+  @@index([tagId])
+  @@map("restaurant_tags")
+}
+
+// ===========================================================================
+// Restaurant
+// ===========================================================================
+
+model Restaurant {
+  id   String @id @default(uuid(7))
+  slug String
+  name String
+
+  // --- Location -----------------------------------------------------------
+  cityId         String
+  city           City          @relation(fields: [cityId], references: [id])
+  neighborhoodId String?
+  neighborhood   Neighborhood? @relation(fields: [neighborhoodId], references: [id])
+  /// The actual municipality: Miami Beach, Coral Gables, Fort Lauderdale.
+  municipality   String?
+
+  addressLine   String?
+  postalCode    String?
+  latitude      Float?
+  longitude     Float?
+  googleMapsUrl String?
+
+  // --- Contact ------------------------------------------------------------
+  phone          String?
+  email          String?
+  websiteUrl     String?
+  menuUrl        String?
+  reservationUrl String?
+  /// { instagram, facebook, tiktok, x, youtube }
+  socials        Json?
+
+  // --- Editorial ----------------------------------------------------------
+  description      String? @db.Text
+  story            String? @db.Text
+  whatMakesSpecial String? @db.Text
+  chefStory        String? @db.Text
+  yearEstablished  Int?
+  /// The raw cuisine string from the source, e.g. "Korean BBQ / Hot Pot".
+  /// Kept for display; the normalised values live in tags.
+  subCuisine       String?
+  /// Comma separated signature dishes, shown on cards.
+  signatureDishes  String?
+
+  // --- Hours --------------------------------------------------------------
+  /// Original human readable hours. Always displayed, never lossy.
+  hoursText String?
+  hours     RestaurantHours[]
+
+  // --- Classification -----------------------------------------------------
+  priceTier PriceTier?
+  michelin  MichelinRating?
+
+  // --- Lifecycle ----------------------------------------------------------
+  status     RestaurantStatus @default(DRAFT)
+  claimState ClaimState       @default(UNCLAIMED)
+
+  // --- Media --------------------------------------------------------------
+  coverPhotoId String?           @unique
+  coverPhoto   RestaurantPhoto?  @relation("CoverPhoto", fields: [coverPhotoId], references: [id])
+  logoId       String?           @unique
+  logo         RestaurantPhoto?  @relation("LogoPhoto", fields: [logoId], references: [id])
+  photos       RestaurantPhoto[] @relation("RestaurantPhotos")
+
+  // --- Denormalised, so list queries never aggregate ----------------------
+  ratingAverage Float @default(0)
+  reviewCount   Int   @default(0)
+  viewCount     Int   @default(0)
+
+  // --- Owner edits awaiting approval --------------------------------------
+  /// Proposed values. Live columns stay untouched until an admin approves, and
+  /// the owner's preview renders from { ...restaurant, ...pendingChanges }.
+  pendingChanges     Json?
+  pendingStatus      PendingStatus @default(NONE)
+  pendingSubmittedAt DateTime?
+  pendingSubmittedBy String?
+  pendingReviewNote  String?
+
+  // --- Provenance ---------------------------------------------------------
+  /// Base44 id. Makes the seed re-runnable without creating duplicates.
+  externalRef   String? @unique
+  /// Admin only notes, never shown publicly.
+  internalNotes String? @db.Text
+
+  tags   RestaurantTag[]
+  claims RestaurantClaim[]
+  owners RestaurantOwner[]
+  events Event[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cityId, slug])
+  @@index([cityId, status, name])
+  @@index([cityId, neighborhoodId, status])
+  @@index([status, ratingAverage(sort: Desc)])
+  @@index([claimState])
+  @@index([pendingStatus, pendingSubmittedAt])
+  @@map("restaurants")
+}
+
+model RestaurantHours {
+  id           String     @id @default(uuid(7))
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  /// 0 = Sunday
+  dayOfWeek Int
+  /// Local wall clock, "11:30". Not a timestamp, because "opens at 11:30" is a
+  /// fact about local time that must not shift with daylight saving.
+  opensAt   String
+  /// "23:00". A value lower than opensAt means it crosses midnight.
+  closesAt  String
+  /// Optional label for split service, e.g. "Lunch" or "Dinner".
+  label     String?
+
+  @@index([restaurantId, dayOfWeek])
+  @@map("restaurant_hours")
+}
+
+model RestaurantPhoto {
+  id           String     @id @default(uuid(7))
+  restaurantId String
+  restaurant   Restaurant @relation("RestaurantPhotos", fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  /// Object key in our own storage. Null until the image has been re-hosted.
+  storageKey String?
+  /// Where the image is served from right now.
+  url        String
+  /// Original third party URL, for provenance and re-download.
+  sourceUrl  String?
+
+  width    Int?
+  height   Int?
+  blurhash String?
+  caption  String?
+
+  role      PhotoRole   @default(GALLERY)
+  status    PhotoStatus @default(APPROVED)
+  source    PhotoSource @default(TEAM)
+  sortOrder Int         @default(0)
+
+  uploadedById String?
+  uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  coverOf Restaurant? @relation("CoverPhoto")
+  logoOf  Restaurant? @relation("LogoPhoto")
+
+  createdAt DateTime @default(now())
+
+  @@index([restaurantId, status, sortOrder])
+  @@map("restaurant_photos")
+}
+
+// ===========================================================================
+// People
+// ===========================================================================
+
+model User {
+  id           String  @id @default(uuid(7))
+  email        String  @unique
+  /// Public handle. Generated on sign-up so nobody is asked to invent one.
+  username     String  @unique
+  name         String
+  /// Null for accounts created through OAuth only.
+  passwordHash String?
+  googleId     String? @unique
+  avatarUrl    String?
+  phone        String?
+
+  role          Role    @default(USER)
+  isActive      Boolean @default(true)
+  emailVerified Boolean @default(false)
+
+  /// Throttling state for password sign-in. Reset on every success.
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+
+  sessions         Session[]
+  ownedRestaurants RestaurantOwner[]
+  claims           RestaurantClaim[]
+  uploadedPhotos   RestaurantPhoto[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([role, isActive])
+  @@map("users")
+}
+
+/// Server-side sessions. Opaque tokens rather than JWTs so signing out, an
+/// admin disabling an account, or a revoked claim all take effect immediately.
+model Session {
+  id     String @id @default(uuid(7))
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the cookie value. A database leak must not hand over live sessions.
+  tokenHash String @unique
+
+  userAgent String?
+  ip        String?
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model RestaurantClaim {
+  id           String     @id @default(uuid(7))
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// "Owner", "Manager", "Marketing".
+  claimantRole String
+  workEmail    String
+  mobilePhone  String
+  note         String? @db.Text
+
+  verificationMethod String?
+  verifiedAt         DateTime?
+
+  status       ClaimStatus @default(PENDING)
+  reviewedById String?
+  reviewNote   String?
+  reviewedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([restaurantId, userId])
+  @@index([status, createdAt])
+  @@map("restaurant_claims")
+}
+
+/// Ownership is a relationship, not a role. One person can own several
+/// restaurants and still be an ordinary member who writes reviews.
+model RestaurantOwner {
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([restaurantId, userId])
+  @@index([userId])
+  @@map("restaurant_owners")
+}
+
+// ===========================================================================
+// Community
+// ===========================================================================
+
+/// Community events shown on Asian Eats and, later, a dedicated calendar.
+/// Admin-authored. Drafts are invisible to the public until published.
+model Event {
+  id    String @id @default(uuid(7))
+  slug  String @unique
+  title String
+
+  /// Who is putting it on: a collective, a restaurant, or Omomoom itself.
+  organiser   String
+  description String @db.Text
+
+  startsAt DateTime
+  /// Null for a single moment with no stated finish.
+  endsAt   DateTime?
+
+  venue        String
+  neighborhood String?
+  ticketUrl    String?
+
+  /// Set when the event happens at a listing we already have.
+  restaurantId String?
+  restaurant   Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: SetNull)
+
+  status EventStatus @default(DRAFT)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, startsAt])
+  @@index([restaurantId])
+  @@map("events")
+}

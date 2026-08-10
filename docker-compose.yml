@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: omomoom-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: omomoom
+      POSTGRES_PASSWORD: omomoom
+      POSTGRES_DB: omomoom
+    ports:
+      # host:container — 5433 on the host because another local Postgres already
+      # owns 5432. Keep this in sync with DATABASE_URL in .env.
+      - '5433:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U omomoom -d omomoom']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Optional web UI for browsing the database at http://localhost:8080
+  # Start it with:  docker compose up -d adminer
+  adminer:
+    image: adminer:5
+    container_name: omomoom-adminer
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    ports:
+      - '8080:8080'
+
+volumes:
+  postgres_data:
