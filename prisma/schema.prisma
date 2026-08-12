@@ -282,10 +282,12 @@ model Restaurant {
   /// Admin only notes, never shown publicly.
   internalNotes String? @db.Text
 
-  tags   RestaurantTag[]
-  claims RestaurantClaim[]
-  owners RestaurantOwner[]
-  events Event[]
+  tags            RestaurantTag[]
+  claims          RestaurantClaim[]
+  owners          RestaurantOwner[]
+  events          Event[]
+  recommendations Recommendation[]
+  savedBy         SavedRestaurant[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -380,6 +382,8 @@ model User {
   ownedRestaurants RestaurantOwner[]
   claims           RestaurantClaim[]
   uploadedPhotos   RestaurantPhoto[]
+  recommendations  Recommendation[]
+  saves            SavedRestaurant[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -488,4 +492,59 @@ model Event {
   @@index([status, startsAt])
   @@index([restaurantId])
   @@map("events")
+}
+
+// ===========================================================================
+// Contributions
+// ===========================================================================
+
+enum RecommendationStatus {
+  PUBLISHED
+  HIDDEN // pulled by an admin, kept for the author's record
+}
+
+/// One person saying "go here and order this". The dish is the point: Google
+/// answers whether a restaurant is good, this answers what to eat. Several per
+/// restaurant per person is deliberate, since a place can have more than one
+/// thing worth ordering.
+model Recommendation {
+  id String @id @default(uuid(7))
+
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  /// What to order. Free text so nobody is blocked by a missing tag.
+  dish    String
+  /// 1 to 5.
+  rating  Int
+  comment String? @db.Text
+
+  /// Set once uploads land. Null means a text-only recommendation.
+  photoUrl String?
+
+  status RecommendationStatus @default(PUBLISHED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([restaurantId, status, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("recommendations")
+}
+
+/// The Want to try list. A save is a bookmark, not an opinion.
+model SavedRestaurant {
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([userId, restaurantId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([restaurantId])
+  @@map("saved_restaurants")
 }

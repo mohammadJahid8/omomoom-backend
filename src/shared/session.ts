@@ -12,8 +12,8 @@ export const hashToken = (token: string): string =>
 
 const cookieOptions = (maxAgeMs: number): CookieOptions => ({
   httpOnly: true,
-  sameSite: 'lax',
-  secure: config.isProduction,
+  sameSite: config.session.sameSite,
+  secure: config.session.secure,
   path: '/',
   maxAge: maxAgeMs,
   ...(config.session.cookieDomain ? { domain: config.session.cookieDomain } : {}),

@@ -20,7 +20,7 @@ import type {
   RestaurantFilters,
 } from './restaurant.interface';
 
-const cardSelect = {
+export const cardSelect = {
   id: true,
   slug: true,
   name: true,
@@ -181,7 +181,7 @@ const buildOrderBy = (
   }
 };
 
-const shapeCard = (row: CardRow) => {
+export const shapeCard = (row: CardRow) => {
   const { tags, neighborhood, coverPhoto, ...rest } = row;
   const cuisines = tags.map((t) => t.tag);
 

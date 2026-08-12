@@ -34,6 +34,7 @@ const envSchema = z.object({
   SESSION_COOKIE_NAME: z.string().default('omomoom_session'),
   /** Blank on localhost so the cookie stays host-only. ".omomoom.com" in production. */
   COOKIE_DOMAIN: z.string().optional(),
+  COOKIE_SAMESITE: z.enum(['lax', 'none', 'strict']).optional(),
 
   APP_URL: z.string().default('http://localhost:3000'),
   API_URL: z.string().default('http://localhost:5001'),
@@ -64,6 +65,17 @@ if (!parsed.success) {
 
 const env = parsed.data;
 
+const isProduction = env.NODE_ENV === 'production';
+
+/**
+ * The frontend and API sit on different sites once deployed, so the session
+ * cookie has to travel cross-site. `none` is the only value browsers send
+ * there, and it is only honoured alongside `Secure`, which rules it out over
+ * plain HTTP locally. Hence lax in development, none in production, and an
+ * override for either.
+ */
+const cookieSameSite = env.COOKIE_SAMESITE ?? (isProduction ? 'none' : 'lax');
+
 const config = {
   env: env.NODE_ENV,
   isProduction: env.NODE_ENV === 'production',
@@ -87,6 +99,8 @@ const config = {
     ttlDays: env.SESSION_TTL_DAYS,
     cookieName: env.SESSION_COOKIE_NAME,
     cookieDomain: env.COOKIE_DOMAIN,
+    sameSite: cookieSameSite,
+    secure: cookieSameSite === 'none' || isProduction,
   },
 
   appUrl: env.APP_URL.replace(/\/$/, ''),

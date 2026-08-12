@@ -1,0 +1,44 @@
+import { z } from 'zod';
+
+const create = z.object({
+  body: z.object({
+    restaurantId: z.uuid(),
+    dish: z
+      .string()
+      .trim()
+      .min(2, 'Name the dish')
+      .max(80, 'Keep the dish name short'),
+    rating: z.coerce
+      .number()
+      .int('Pick a whole number')
+      .min(1, 'Rate it from 1 to 5')
+      .max(5, 'Rate it from 1 to 5'),
+    comment: z.string().trim().max(600).nullish().or(z.literal('')),
+    photoUrl: z.url().max(500).nullish().or(z.literal('')),
+  }),
+});
+
+const listForRestaurant = z.object({
+  query: z.object({
+    restaurantId: z.uuid(),
+    limit: z.coerce.number().int().min(1).max(50).default(10),
+  }),
+});
+
+const listRecent = z.object({
+  query: z.object({
+    limit: z.coerce.number().int().min(1).max(24).default(6),
+  }),
+});
+
+export const RecommendationValidation = {
+  create,
+  listForRestaurant,
+  listRecent,
+};
+
+export type CreateRecommendationBody = z.infer<typeof create>['body'];
+export type ListForRestaurantQuery = z.infer<
+  typeof listForRestaurant
+>['query'];
+export type ListRecentQuery = z.infer<typeof listRecent>['query'];

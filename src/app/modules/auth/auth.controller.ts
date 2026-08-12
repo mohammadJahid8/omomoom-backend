@@ -1,5 +1,5 @@
 import { StatusCodes } from 'http-status-codes';
-import type { Request, Response } from 'express';
+import type { CookieOptions, Request, Response } from 'express';
 
 import config from '../../../config';
 import ApiError from '../../../errors/ApiError';
@@ -86,14 +86,14 @@ const googleStart = catchAsync(async (req: Request, res: Response) => {
     );
   }
 
-  const shortLived = {
+  const shortLived: CookieOptions = {
     httpOnly: true,
-    sameSite: 'lax',
-    secure: config.isProduction,
+    sameSite: config.session.sameSite,
+    secure: config.session.secure,
     path: '/',
     maxAge: 10 * 60 * 1000,
     ...(config.session.cookieDomain ? { domain: config.session.cookieDomain } : {}),
-  } as const;
+  };
 
   const state = newState();
   res.cookie(GOOGLE_STATE_COOKIE, state, shortLived);
