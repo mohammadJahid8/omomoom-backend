@@ -9,6 +9,8 @@ import prisma from '../../../shared/prisma';
 import { isAdmin } from '../../middlewares/auth';
 import type { SessionUser } from '../../../shared/session';
 
+import { summarise, visitScore } from './recommendation.scoring';
+
 import type {
   CreateRecommendationBody,
   ListForRestaurantQuery,
@@ -21,6 +23,14 @@ const publicSelect = {
   rating: true,
   comment: true,
   photoUrl: true,
+  wouldOrderAgain: true,
+  taste: true,
+  service: true,
+  value: true,
+  ambience: true,
+  hygiene: true,
+  visitScore: true,
+  aiSummary: true,
   createdAt: true,
   user: { select: { username: true, name: true, avatarUrl: true } },
 } as const;
@@ -66,12 +76,30 @@ async function refreshRestaurantRating(restaurantId: string): Promise<void> {
 const create = async (userId: string, input: CreateRecommendationBody) => {
   const restaurant = await prisma.restaurant.findFirst({
     where: { id: input.restaurantId, status: RestaurantStatus.PUBLISHED },
-    select: { id: true },
+    select: { id: true, name: true },
   });
 
   if (!restaurant) {
     throw new ApiError(StatusCodes.NOT_FOUND, 'Restaurant not found');
   }
+
+  const ratings = {
+    taste: input.taste ?? null,
+    service: input.service ?? null,
+    value: input.value ?? null,
+    ambience: input.ambience ?? null,
+    hygiene: input.hygiene ?? null,
+  };
+
+  const comment = blankToNull(input.comment);
+
+  const aiSummary = await summarise({
+    restaurantName: restaurant.name,
+    dish: input.dish,
+    rating: input.rating,
+    comment,
+    ratings,
+  });
 
   const created = await prisma.recommendation.create({
     data: {
@@ -79,8 +107,12 @@ const create = async (userId: string, input: CreateRecommendationBody) => {
       restaurantId: input.restaurantId,
       dish: input.dish,
       rating: input.rating,
-      comment: blankToNull(input.comment),
+      comment,
       photoUrl: blankToNull(input.photoUrl),
+      wouldOrderAgain: input.wouldOrderAgain ?? null,
+      ...ratings,
+      visitScore: visitScore(ratings),
+      aiSummary,
     },
     select: publicSelect,
   });

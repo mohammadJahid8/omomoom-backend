@@ -503,6 +503,12 @@ enum RecommendationStatus {
   HIDDEN // pulled by an admin, kept for the author's record
 }
 
+enum OrderAgain {
+  DEFINITELY
+  MAYBE
+  NO
+}
+
 /// One person saying "go here and order this". The dish is the point: Google
 /// answers whether a restaurant is good, this answers what to eat. Several per
 /// restaurant per person is deliberate, since a place can have more than one
@@ -517,9 +523,26 @@ model Recommendation {
 
   /// What to order. Free text so nobody is blocked by a missing tag.
   dish    String
-  /// 1 to 5.
+  /// The dish, 1 to 5. The headline number and the only required rating.
   rating  Int
   comment String? @db.Text
+
+  /// Would you order that dish again? Null when they skipped it.
+  wouldOrderAgain OrderAgain?
+
+  // --- How the visit went, all optional ------------------------------------
+  taste   Int?
+  service Int?
+  value   Int?
+  ambience Int?
+  hygiene Int?
+
+  /// Weighted from whichever of the above were filled in. Null until at least
+  /// one is. Stored rather than derived so the number a person saw when they
+  /// posted is the number that stays on their review.
+  visitScore Float?
+  /// One line written by Gemini from the ratings and comment.
+  aiSummary  String?
 
   /// Set once uploads land. Null means a text-only recommendation.
   photoUrl String?

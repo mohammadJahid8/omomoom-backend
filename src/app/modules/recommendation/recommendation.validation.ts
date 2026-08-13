@@ -1,5 +1,12 @@
 import { z } from 'zod';
 
+const aspect = z.coerce
+  .number()
+  .int('Pick a whole number')
+  .min(1)
+  .max(5)
+  .nullish();
+
 const create = z.object({
   body: z.object({
     restaurantId: z.uuid(),
@@ -11,10 +18,18 @@ const create = z.object({
     rating: z.coerce
       .number()
       .int('Pick a whole number')
-      .min(1, 'Rate it from 1 to 5')
-      .max(5, 'Rate it from 1 to 5'),
+      .min(1, 'Rate the dish from 1 to 5')
+      .max(5, 'Rate the dish from 1 to 5'),
     comment: z.string().trim().max(600).nullish().or(z.literal('')),
     photoUrl: z.url().max(500).nullish().or(z.literal('')),
+
+    wouldOrderAgain: z.enum(['DEFINITELY', 'MAYBE', 'NO']).nullish(),
+
+    taste: aspect,
+    service: aspect,
+    value: aspect,
+    ambience: aspect,
+    hygiene: aspect,
   }),
 });
 
