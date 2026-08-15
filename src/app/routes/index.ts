@@ -2,6 +2,7 @@ import express, { type Router } from 'express';
 
 import { AiRoutes } from '../modules/ai/ai.route';
 import { AuthRoutes } from '../modules/auth/auth.route';
+import { ClaimRoutes } from '../modules/claim/claim.route';
 import { EventRoutes } from '../modules/event/event.route';
 import { HealthRoutes } from '../modules/health/health.route';
 import { RecommendationRoutes } from '../modules/recommendation/recommendation.route';
@@ -16,6 +17,7 @@ const moduleRoutes: { path: string; route: Router }[] = [
   { path: '/health', route: HealthRoutes },
   { path: '/auth', route: AuthRoutes },
   { path: '/ai', route: AiRoutes },
+  { path: '/claims', route: ClaimRoutes },
   { path: '/events', route: EventRoutes },
   { path: '/recommendations', route: RecommendationRoutes },
   { path: '/saves', route: SaveRoutes },

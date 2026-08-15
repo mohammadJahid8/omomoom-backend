@@ -426,8 +426,16 @@ model RestaurantClaim {
   mobilePhone  String
   note         String? @db.Text
 
+  /// PHONE, EMAIL_DOMAIN or MANUAL.
   verificationMethod String?
   verifiedAt         DateTime?
+
+  /// The live code, hashed. Cleared once used.
+  codeHash      String?
+  /// Masked destination, e.g. "(305) ••• ••23". Safe to show back.
+  codeSentTo    String?
+  codeExpiresAt DateTime?
+  codeAttempts  Int       @default(0)
 
   status       ClaimStatus @default(PENDING)
   reviewedById String?
