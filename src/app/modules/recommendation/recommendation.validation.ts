@@ -21,7 +21,20 @@ const create = z.object({
       .min(1, 'Rate the dish from 1 to 5')
       .max(5, 'Rate the dish from 1 to 5'),
     comment: z.string().trim().max(600).nullish().or(z.literal('')),
-    photoUrl: z.url().max(500).nullish().or(z.literal('')),
+    /**
+     * Storage keys from /uploads/sign, never URLs, each verified before it is
+     * kept. Dimensions come from the browser so a gallery can reserve the right
+     * shape before the image arrives.
+     */
+    photos: z
+      .array(
+        z.object({
+          key: z.string().trim().min(1).max(300),
+          width: z.number().int().positive().max(20000).optional(),
+          height: z.number().int().positive().max(20000).optional(),
+        }),
+      )
+      .optional(),
 
     wouldOrderAgain: z.enum(['DEFINITELY', 'MAYBE', 'NO']).nullish(),
 

@@ -42,6 +42,17 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
 
+  /**
+   * Cloudflare R2. Optional so the app boots without them: every upload route
+   * answers 503 until all five are set, rather than crashing on startup.
+   */
+  R2_ACCOUNT_ID: z.string().optional(),
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional(),
+  R2_BUCKET: z.string().optional(),
+  /** Where the files are read from: the r2.dev URL, or your own media domain. */
+  R2_PUBLIC_URL: z.string().optional(),
+
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
 
@@ -68,13 +79,21 @@ const env = parsed.data;
 const isProduction = env.NODE_ENV === 'production';
 
 /**
- * The frontend and API sit on different sites once deployed, so the session
- * cookie has to travel cross-site. `none` is the only value browsers send
- * there, and it is only honoured alongside `Secure`, which rules it out over
- * plain HTTP locally. Hence lax in development, none in production, and an
- * override for either.
+ * `lax` everywhere: the browser reaches the API through the frontend's own
+ * origin (see the proxy in the frontend's next.config), so the session cookie
+ * is first-party and never needs the weaker `none`. Override only if the two
+ * are ever served from genuinely different sites again, and read the CSRF
+ * note in that case, since `none` makes the CORS origin list the only defence.
  */
-const cookieSameSite = env.COOKIE_SAMESITE ?? (isProduction ? 'none' : 'lax');
+const cookieSameSite = env.COOKIE_SAMESITE ?? 'lax';
+
+const storageReady = Boolean(
+  env.R2_ACCOUNT_ID &&
+    env.R2_ACCESS_KEY_ID &&
+    env.R2_SECRET_ACCESS_KEY &&
+    env.R2_BUCKET &&
+    env.R2_PUBLIC_URL,
+);
 
 const config = {
   env: env.NODE_ENV,
@@ -110,6 +129,15 @@ const config = {
     clientId: env.GOOGLE_CLIENT_ID,
     clientSecret: env.GOOGLE_CLIENT_SECRET,
     enabled: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
+  },
+
+  storage: {
+    enabled: storageReady,
+    endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    accessKeyId: env.R2_ACCESS_KEY_ID ?? '',
+    secretAccessKey: env.R2_SECRET_ACCESS_KEY ?? '',
+    bucket: env.R2_BUCKET ?? '',
+    publicBaseUrl: (env.R2_PUBLIC_URL ?? '').replace(/\/$/, ''),
   },
 
   gemini: {

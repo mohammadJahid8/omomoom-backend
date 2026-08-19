@@ -20,6 +20,7 @@ import type {
   ManualBody,
   SendCodeBody,
   StartClaimBody,
+  SuggestBody,
   VerifyBody,
 } from './claim.validation';
 
@@ -134,6 +135,16 @@ async function loadOpenClaim(userId: string, claimId: string) {
     );
   }
 
+  // Two people can start on the same unclaimed listing. Once one of them
+  // finishes, the other's half-done claim stops here rather than quietly
+  // adding a second owner to a restaurant that is no longer open to claim.
+  if (claim.restaurant.claimState === ClaimState.CLAIMED) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      'Someone has already claimed this restaurant',
+    );
+  }
+
   return claim;
 }
 
@@ -157,7 +168,7 @@ const start = async (userId: string, input: StartClaimBody) => {
   if (restaurant.claimState === ClaimState.CLAIMED) {
     throw new ApiError(
       StatusCodes.CONFLICT,
-      'Someone has already claimed this restaurant. Report a problem if that should be you.',
+      'Someone has already claimed this restaurant',
     );
   }
 
@@ -330,6 +341,63 @@ const mineFor = async (userId: string, restaurantId: string) => {
   };
 };
 
+/**
+ * A restaurant we do not list yet. Created as a draft so it is invisible
+ * publicly, with the submitter's claim attached; approving it publishes the
+ * listing and hands them the keys in one step.
+ */
+const suggest = async (userId: string, input: SuggestBody) => {
+  const city = await prisma.city.findFirst({
+    where: { isActive: true },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  });
+
+  if (!city) {
+    throw new ApiError(
+      StatusCodes.UNPROCESSABLE_ENTITY,
+      'No city is configured yet',
+    );
+  }
+
+  const slugBase =
+    input.name
+      .normalize('NFKD')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 70) || 'restaurant';
+
+  const restaurant = await prisma.restaurant.create({
+    data: {
+      cityId: city.id,
+      name: input.name,
+      slug: `${slugBase}-${Date.now().toString(36)}`,
+      status: RestaurantStatus.DRAFT,
+      municipality: input.municipality,
+      addressLine: input.addressLine || null,
+      phone: input.phone || null,
+      websiteUrl: input.websiteUrl || null,
+      internalNotes: `Submitted by a member awaiting review.`,
+    },
+    select: { id: true },
+  });
+
+  return prisma.restaurantClaim.create({
+    data: {
+      restaurantId: restaurant.id,
+      userId,
+      claimantRole: input.claimantRole,
+      workEmail: input.workEmail,
+      mobilePhone: input.mobilePhone,
+      note: input.note,
+      verificationMethod: 'MANUAL',
+      status: ClaimStatus.PENDING,
+    },
+    select: claimSelect,
+  });
+};
+
 export const ClaimService = {
   start,
   issueCode,
@@ -337,4 +405,5 @@ export const ClaimService = {
   requestManual,
   mineFor,
   optionsFor,
+  suggest,
 };

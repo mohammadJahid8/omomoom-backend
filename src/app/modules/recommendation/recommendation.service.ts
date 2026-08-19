@@ -2,10 +2,14 @@ import { StatusCodes } from 'http-status-codes';
 
 import ApiError from '../../../errors/ApiError';
 import {
+  PhotoRole,
+  PhotoSource,
+  PhotoStatus,
   RecommendationStatus,
   RestaurantStatus,
 } from '../../../generated/prisma/enums';
 import prisma from '../../../shared/prisma';
+import { describeObject, publicUrlFor } from '../../../shared/storage';
 import { isAdmin } from '../../middlewares/auth';
 import type { SessionUser } from '../../../shared/session';
 
@@ -22,7 +26,11 @@ const publicSelect = {
   dish: true,
   rating: true,
   comment: true,
-  photoUrl: true,
+  photos: {
+    where: { status: PhotoStatus.APPROVED },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, url: true, caption: true, width: true, height: true },
+  },
   wouldOrderAgain: true,
   taste: true,
   service: true,
@@ -101,6 +109,26 @@ const create = async (userId: string, input: CreateRecommendationBody) => {
     ratings,
   });
 
+  /**
+   * Only keys we handed to this person for this restaurant, and only ones the
+   * upload actually completed. Anything else is dropped rather than refused:
+   * a failed photo should not cost someone the review they just wrote.
+   */
+  const seen = new Set<string>();
+  const offered = (input.photos ?? []).filter((photo) => {
+    if (seen.has(photo.key)) return false;
+    seen.add(photo.key);
+    return photo.key.startsWith(`community/${input.restaurantId}/`);
+  });
+
+  const real = (
+    await Promise.all(
+      offered.map(async (photo) =>
+        (await describeObject(photo.key)) ? photo : null,
+      ),
+    )
+  ).filter((photo): photo is (typeof offered)[number] => photo !== null);
+
   const created = await prisma.recommendation.create({
     data: {
       userId,
@@ -108,11 +136,26 @@ const create = async (userId: string, input: CreateRecommendationBody) => {
       dish: input.dish,
       rating: input.rating,
       comment,
-      photoUrl: blankToNull(input.photoUrl),
       wouldOrderAgain: input.wouldOrderAgain ?? null,
       ...ratings,
       visitScore: visitScore(ratings),
       aiSummary,
+      photos: {
+        create: real.map((photo) => ({
+          restaurantId: input.restaurantId,
+          storageKey: photo.key,
+          url: publicUrlFor(photo.key),
+          width: photo.width ?? null,
+          height: photo.height ?? null,
+          role: PhotoRole.GALLERY,
+          // Published reviews carry unpublished photos: the words are useful
+          // straight away, the pictures are the part that needs a human.
+          status: PhotoStatus.PENDING,
+          source: PhotoSource.USER,
+          uploadedById: userId,
+          sortOrder: 1000,
+        })),
+      },
     },
     select: publicSelect,
   });
@@ -181,11 +224,12 @@ const statsForUser = async (userId: string) => {
     prisma.recommendation.count({
       where: { userId, status: RecommendationStatus.PUBLISHED },
     }),
-    prisma.recommendation.count({
+    // Photos are their own contribution now, not a field on a review.
+    // Rejected ones are left out; the person can still see them on their tab.
+    prisma.restaurantPhoto.count({
       where: {
-        userId,
-        status: RecommendationStatus.PUBLISHED,
-        photoUrl: { not: null },
+        uploadedById: userId,
+        status: { in: [PhotoStatus.PENDING, PhotoStatus.APPROVED] },
       },
     }),
     prisma.recommendation.findMany({

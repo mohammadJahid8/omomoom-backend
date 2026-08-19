@@ -36,7 +36,12 @@ const updateProfile = z.object({
         'Letters, numbers and hyphens only',
       )
       .optional(),
-    avatarUrl: z.string().url().max(500).nullish(),
+    /**
+     * A storage key we handed out, never a URL. Taking a URL would let anyone
+     * point their avatar at any image on the internet, including one they can
+     * swap out later. Null removes the current photo.
+     */
+    avatarKey: z.string().trim().max(300).nullish(),
   }),
 });
 

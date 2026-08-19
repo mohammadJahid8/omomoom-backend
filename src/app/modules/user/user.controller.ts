@@ -4,6 +4,7 @@ import catchAsync from '../../../shared/catchAsync';
 import getQuery from '../../../shared/getQuery';
 import sendResponse from '../../../shared/sendResponse';
 
+import { UserProfileService } from './user.profile.service';
 import { UserService } from './user.service';
 import type { ListUsersQuery } from './user.validation';
 
@@ -21,4 +22,11 @@ const update = catchAsync(async (req: Request, res: Response) => {
   sendResponse(res, { message: 'Account updated', data });
 });
 
-export const UserController = { list, update };
+const publicProfile = catchAsync(async (req: Request, res: Response) => {
+  const data = await UserProfileService.publicProfile(
+    req.params.username as string,
+  );
+  sendResponse(res, { message: 'Profile retrieved', data });
+});
+
+export const UserController = { list, update, publicProfile };

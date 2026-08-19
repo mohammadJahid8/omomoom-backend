@@ -111,6 +111,15 @@ enum EventStatus {
   PUBLISHED
 }
 
+/// Whether a claimed restaurant is paying. Kept apart from claimState because
+/// ownership is proven once and for all, while paying comes and goes.
+enum SubscriptionStatus {
+  NONE
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+}
+
 // ===========================================================================
 // Geography
 // ===========================================================================
@@ -255,6 +264,14 @@ model Restaurant {
   status     RestaurantStatus @default(DRAFT)
   claimState ClaimState       @default(UNCLAIMED)
 
+  // --- Subscription -------------------------------------------------------
+  subscriptionStatus SubscriptionStatus @default(NONE)
+  subscribedAt       DateTime?
+  /// Paid through this date. The Studio stays open until it passes.
+  subscribedUntil    DateTime?
+  /// Set by the payment provider once one is wired up.
+  subscriptionRef    String?
+
   // --- Media --------------------------------------------------------------
   coverPhotoId String?           @unique
   coverPhoto   RestaurantPhoto?  @relation("CoverPhoto", fields: [coverPhotoId], references: [id])
@@ -345,12 +362,19 @@ model RestaurantPhoto {
   uploadedById String?
   uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
 
+  /// Set when the photo came in attached to a review. Deleting the review takes
+  /// its photos with it: they were evidence for that visit, not a free-floating
+  /// contribution to the listing.
+  recommendationId String?
+  recommendation   Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+
   coverOf Restaurant? @relation("CoverPhoto")
   logoOf  Restaurant? @relation("LogoPhoto")
 
   createdAt DateTime @default(now())
 
   @@index([restaurantId, status, sortOrder])
+  @@index([recommendationId])
   @@map("restaurant_photos")
 }
 
@@ -552,8 +576,9 @@ model Recommendation {
   /// One line written by Gemini from the ratings and comment.
   aiSummary  String?
 
-  /// Set once uploads land. Null means a text-only recommendation.
-  photoUrl String?
+  /// Photos taken on the visit. They wait for a moderator, so a review can be
+  /// published while its pictures are still being checked.
+  photos RestaurantPhoto[]
 
   status RecommendationStatus @default(PUBLISHED)
 

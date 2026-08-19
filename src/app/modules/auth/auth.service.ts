@@ -5,6 +5,12 @@ import config from '../../../config';
 import ApiError from '../../../errors/ApiError';
 import prisma from '../../../shared/prisma';
 import type { SessionUser } from '../../../shared/session';
+import {
+  describeObject,
+  keyFromUrl,
+  publicUrlFor,
+  removeObject,
+} from '../../../shared/storage';
 
 import { LOCK_AFTER, LOCK_FOR_MINUTES, generateUsername, lockState } from './auth.helpers';
 
@@ -181,9 +187,36 @@ const upsertGoogleUser = async (profile: GoogleProfile) => {
   return { user: shape(created), isNew: true };
 };
 
+/**
+ * Turns a key the browser says it uploaded into a URL we are willing to store.
+ * It has to sit under this person's own prefix and it has to actually exist,
+ * so a key cannot be guessed, borrowed from another account, or invented.
+ */
+const resolveAvatar = async (
+  user: { id: string; avatarUrl: string | null },
+  key: string,
+): Promise<string> => {
+  const prefix = `avatars/${user.id}/`;
+
+  if (!key.startsWith(prefix)) {
+    throw new ApiError(StatusCodes.FORBIDDEN, 'That upload is not yours');
+  }
+
+  const object = await describeObject(key);
+
+  if (!object) {
+    throw new ApiError(
+      StatusCodes.UNPROCESSABLE_ENTITY,
+      'That upload did not finish. Try again.',
+    );
+  }
+
+  return publicUrlFor(key);
+};
+
 const updateProfile = async (
   userId: string,
-  input: { name?: string; username?: string; avatarUrl?: string | null },
+  input: { name?: string; username?: string; avatarKey?: string | null },
 ) => {
   if (input.username) {
     const taken = await prisma.user.findFirst({
@@ -195,17 +228,39 @@ const updateProfile = async (
     }
   }
 
-  return shape(
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        ...(input.name === undefined ? {} : { name: input.name }),
-        ...(input.username === undefined ? {} : { username: input.username }),
-        ...(input.avatarUrl === undefined ? {} : { avatarUrl: input.avatarUrl }),
-      },
-      select: publicUser,
-    }),
-  );
+  const existing = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, avatarUrl: true },
+  });
+
+  if (!existing) throw new ApiError(StatusCodes.NOT_FOUND, 'Account not found');
+
+  let avatarUrl: string | null | undefined;
+
+  if (input.avatarKey !== undefined) {
+    avatarUrl = input.avatarKey
+      ? await resolveAvatar(existing, input.avatarKey)
+      : null;
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.username === undefined ? {} : { username: input.username }),
+      ...(avatarUrl === undefined ? {} : { avatarUrl }),
+    },
+    select: publicUser,
+  });
+
+  // Only ever our own files. A Google profile picture is not ours to delete.
+  const previous = existing.avatarUrl;
+  if (avatarUrl !== undefined && previous && previous !== avatarUrl) {
+    const stale = keyFromUrl(previous);
+    if (stale) await removeObject(stale);
+  }
+
+  return shape(updated);
 };
 
 const me = (user: SessionUser) => user;
