@@ -4,6 +4,8 @@ import ApiError from '../../../errors/ApiError';
 import type { Prisma } from '../../../generated/prisma/client';
 import { RestaurantStatus } from '../../../generated/prisma/enums';
 import prisma from '../../../shared/prisma';
+import { paymentProvider } from '../subscription/subscription.provider';
+import { isSubscriptionActive } from '../subscription/subscription.sync';
 
 import type {
   AdminRestaurantBody,
@@ -22,6 +24,8 @@ const rowSelect = {
   michelin: true,
   ratingAverage: true,
   reviewCount: true,
+  subscriptionStatus: true,
+  subscribedUntil: true,
   neighborhood: { select: { id: true, name: true } },
   coverPhoto: { select: { url: true } },
   updatedAt: true,
@@ -236,15 +240,43 @@ const update = async (id: string, input: AdminRestaurantPatch) => {
   });
 };
 
-const remove = async (id: string) => {
+/**
+ * Deleting a listing someone pays for is not the same as deleting an empty
+ * one, and an admin cannot see the difference from a list. This refuses the
+ * first time and says what would happen, so ending a paying customer's
+ * subscription is always a decision rather than a side effect.
+ */
+const remove = async (id: string, options: { force?: boolean } = {}) => {
   const existing = await prisma.restaurant.findUnique({
     where: { id },
-    select: { id: true },
+    select: {
+      id: true,
+      name: true,
+      subscriptionRef: true,
+      subscriptionStatus: true,
+      subscribedUntil: true,
+      owners: { select: { user: { select: { name: true, email: true } } } },
+    },
   });
 
   if (!existing) {
     throw new ApiError(StatusCodes.NOT_FOUND, 'Restaurant not found');
   }
+
+  if (isSubscriptionActive(existing) && !options.force) {
+    const owner = existing.owners[0]?.user;
+
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      `${existing.name} has a running subscription${
+        owner ? `, paid for by ${owner.name} (${owner.email})` : ''
+      }. Deleting it cancels that subscription immediately and cannot be undone.`,
+    );
+  }
+
+  // Before the row goes. Once it is deleted there is nothing left to tell us
+  // a subscription existed, and it would keep charging someone every month.
+  await paymentProvider.cancelNow(existing.subscriptionRef);
 
   // Cover and logo point at photos that cascade from the restaurant, so the
   // link has to go first or Postgres refuses the delete.

@@ -2,6 +2,7 @@ import { StatusCodes } from 'http-status-codes';
 
 import ApiError from '../../../errors/ApiError';
 import {
+  PhotoSource,
   PhotoStatus,
   RecommendationStatus,
   RestaurantStatus,
@@ -32,9 +33,9 @@ const reviewSelect = {
 } as const;
 
 /**
- * Someone's food identity, as anyone on the internet sees it. Only ever
- * finished, published work: reviews that are live, photos a moderator has
- * cleared. A disabled account has no profile at all.
+ * Someone's food identity: what they contributed as a diner. Photos an owner
+ * uploaded through the Studio belong to the listing, not to them, so they are
+ * left out. Published work only, and no profile at all for a disabled account.
  */
 const publicProfile = async (username: string) => {
   const user = await prisma.user.findFirst({
@@ -64,7 +65,11 @@ const publicProfile = async (username: string) => {
     }),
 
     prisma.restaurantPhoto.findMany({
-      where: { uploadedById: user.id, status: PhotoStatus.APPROVED },
+      where: {
+        uploadedById: user.id,
+        source: PhotoSource.USER,
+        status: PhotoStatus.APPROVED,
+      },
       orderBy: { createdAt: 'desc' },
       take: LIMITS.photos,
       select: {
@@ -98,7 +103,11 @@ const publicProfile = async (username: string) => {
     Promise.all([
       prisma.recommendation.count({ where: published }),
       prisma.restaurantPhoto.count({
-        where: { uploadedById: user.id, status: PhotoStatus.APPROVED },
+        where: {
+          uploadedById: user.id,
+          source: PhotoSource.USER,
+          status: PhotoStatus.APPROVED,
+        },
       }),
       prisma.recommendation
         .findMany({ where: published, distinct: ['restaurantId'], select: { restaurantId: true } })

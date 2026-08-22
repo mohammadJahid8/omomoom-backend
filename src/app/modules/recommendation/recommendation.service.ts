@@ -7,9 +7,11 @@ import {
   PhotoStatus,
   RecommendationStatus,
   RestaurantStatus,
+  TagType,
 } from '../../../generated/prisma/enums';
 import prisma from '../../../shared/prisma';
 import { describeObject, publicUrlFor } from '../../../shared/storage';
+import { MAX_PENDING_PER_USER } from '../upload/upload.service';
 import { isAdmin } from '../../middlewares/auth';
 import type { SessionUser } from '../../../shared/session';
 
@@ -121,11 +123,17 @@ const create = async (userId: string, input: CreateRecommendationBody) => {
     return photo.key.startsWith(`community/${input.restaurantId}/`);
   });
 
+  const waiting = await prisma.restaurantPhoto.count({
+    where: { uploadedById: userId, status: PhotoStatus.PENDING },
+  });
+
+  const room = Math.max(0, MAX_PENDING_PER_USER - waiting);
+
   const real = (
     await Promise.all(
-      offered.map(async (photo) =>
-        (await describeObject(photo.key)) ? photo : null,
-      ),
+      offered
+        .slice(0, room)
+        .map(async (photo) => ((await describeObject(photo.key)) ? photo : null)),
     )
   ).filter((photo): photo is (typeof offered)[number] => photo !== null);
 
@@ -201,7 +209,16 @@ const listRecent = async (query: ListRecentQuery) =>
   prisma.recommendation.findMany({
     where: {
       status: RecommendationStatus.PUBLISHED,
-      restaurant: { status: RestaurantStatus.PUBLISHED },
+      restaurant: {
+        status: RestaurantStatus.PUBLISHED,
+        ...(query.cuisine?.length
+          ? {
+              tags: {
+                some: { tag: { type: TagType.CUISINE, slug: { in: query.cuisine } } },
+              },
+            }
+          : {}),
+      },
     },
     orderBy: { createdAt: 'desc' },
     take: query.limit,
@@ -229,6 +246,7 @@ const statsForUser = async (userId: string) => {
     prisma.restaurantPhoto.count({
       where: {
         uploadedById: userId,
+        source: PhotoSource.USER,
         status: { in: [PhotoStatus.PENDING, PhotoStatus.APPROVED] },
       },
     }),

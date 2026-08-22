@@ -18,7 +18,10 @@ const start = catchAsync(async (req: Request, res: Response) => {
     req.user!,
     req.params.restaurantId as string,
   );
-  sendResponse(res, { message: 'Subscription started', data });
+  sendResponse(res, {
+    message: data.checkoutUrl ? 'Continue to payment' : 'Subscription started',
+    data,
+  });
 });
 
 const cancel = catchAsync(async (req: Request, res: Response) => {
@@ -29,4 +32,26 @@ const cancel = catchAsync(async (req: Request, res: Response) => {
   sendResponse(res, { message: 'Subscription cancelled', data });
 });
 
-export const SubscriptionController = { statusFor, start, cancel };
+const resume = catchAsync(async (req: Request, res: Response) => {
+  const data = await SubscriptionService.resume(
+    req.user!,
+    req.params.restaurantId as string,
+  );
+  sendResponse(res, { message: 'Subscription resumed', data });
+});
+
+const billingPortal = catchAsync(async (req: Request, res: Response) => {
+  const data = await SubscriptionService.billingPortal(
+    req.user!,
+    req.params.restaurantId as string,
+  );
+  sendResponse(res, { message: 'Billing portal ready', data });
+});
+
+export const SubscriptionController = {
+  statusFor,
+  start,
+  cancel,
+  resume,
+  billingPortal,
+};

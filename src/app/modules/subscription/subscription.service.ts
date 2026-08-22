@@ -1,11 +1,13 @@
 import { StatusCodes } from 'http-status-codes';
 
+import config from '../../../config';
 import ApiError from '../../../errors/ApiError';
 import {
   ClaimState,
   SubscriptionStatus,
 } from '../../../generated/prisma/enums';
 import prisma from '../../../shared/prisma';
+import { isSubscriptionActive, syncFromStripe } from './subscription.sync';
 import type { SessionUser } from '../../../shared/session';
 import { isAdmin } from '../../middlewares/auth';
 
@@ -38,14 +40,7 @@ const shape = (row: {
   priceCents: PRICE_CENTS,
   currency: CURRENCY,
   mocked: paymentProvider.mocked,
-  /**
-   * Cancelling leaves the Studio open until the paid period runs out, so the
-   * gate asks "is it still paid for", not "is the status ACTIVE".
-   */
-  active:
-    row.subscriptionStatus === SubscriptionStatus.ACTIVE ||
-    (row.subscriptionStatus === SubscriptionStatus.CANCELLED &&
-      Boolean(row.subscribedUntil && row.subscribedUntil > new Date())),
+  active: isSubscriptionActive(row),
 });
 
 async function requireOwnership(user: SessionUser, restaurantId: string) {
@@ -92,22 +87,81 @@ const start = async (user: SessionUser, restaurantId: string) => {
   const started = await paymentProvider.start({
     restaurantId,
     restaurantName: restaurant.name,
+    userId: user.id,
     userEmail: user.email,
   });
 
-  return shape(
-    await prisma.restaurant.update({
-      where: { id: restaurantId },
-      data: {
-        subscriptionStatus: SubscriptionStatus.ACTIVE,
-        subscribedAt: new Date(),
-        subscribedUntil: started.paidUntil,
-        subscriptionRef: started.reference,
-      },
-      select: stateSelect,
-    }),
-  );
+  // Nothing is marked paid here. Stripe takes the card on its own page and
+  // tells us afterwards, so the only honest answer now is where to send them.
+  if (started.kind === 'redirect') {
+    return { checkoutUrl: started.url, subscription: shape(restaurant) };
+  }
+
+  return {
+    checkoutUrl: null,
+    subscription: shape(
+      await prisma.restaurant.update({
+        where: { id: restaurantId },
+        data: {
+          subscriptionStatus: SubscriptionStatus.ACTIVE,
+          subscribedAt: new Date(),
+          subscribedUntil: started.paidUntil,
+          subscriptionRef: started.reference,
+        },
+        select: stateSelect,
+      }),
+    ),
+  };
 };
+
+/** Stripe's own page for cards and invoices. Cancelling stays in our UI. */
+const billingPortal = async (user: SessionUser, restaurantId: string) => {
+  await requireOwnership(user, restaurantId);
+
+  const url = await paymentProvider.billingPortal({
+    userId: user.id,
+    returnUrl: `${config.appUrl}/dashboard/restaurant/subscription`,
+  });
+
+  if (!url) {
+    throw new ApiError(
+      StatusCodes.SERVICE_UNAVAILABLE,
+      'There is no billing account to manage yet',
+    );
+  }
+
+  return { url };
+};
+
+/**
+ * Reads back what the provider now says rather than assuming the write landed
+ * as asked. The webhook will say the same thing a second later, but the person
+ * who just clicked needs an answer now, and it should be the true one.
+ */
+async function afterProviderChange(
+  restaurantId: string,
+  reference: string | null,
+  fallback: SubscriptionStatus,
+) {
+  if (paymentProvider.mocked || !reference) {
+    return shape(
+      await prisma.restaurant.update({
+        where: { id: restaurantId },
+        data: { subscriptionStatus: fallback },
+        select: stateSelect,
+      }),
+    );
+  }
+
+  await syncFromStripe(reference);
+
+  const fresh = await prisma.restaurant.findUniqueOrThrow({
+    where: { id: restaurantId },
+    select: stateSelect,
+  });
+
+  return shape(fresh);
+}
 
 const cancel = async (user: SessionUser, restaurantId: string) => {
   const restaurant = await requireOwnership(user, restaurantId);
@@ -122,13 +176,47 @@ const cancel = async (user: SessionUser, restaurantId: string) => {
   await paymentProvider.cancel(restaurant.subscriptionRef);
 
   // The paid period is honoured; only the renewal stops.
-  return shape(
-    await prisma.restaurant.update({
-      where: { id: restaurantId },
-      data: { subscriptionStatus: SubscriptionStatus.CANCELLED },
-      select: stateSelect,
-    }),
+  return afterProviderChange(
+    restaurantId,
+    restaurant.subscriptionRef,
+    SubscriptionStatus.CANCELLED,
   );
 };
 
-export const SubscriptionService = { statusFor, start, cancel };
+/**
+ * Changing your mind before the period runs out. Nothing is charged: that month
+ * is already paid for, so this only clears the pending cancellation.
+ */
+const resume = async (user: SessionUser, restaurantId: string) => {
+  const restaurant = await requireOwnership(user, restaurantId);
+
+  if (restaurant.subscriptionStatus !== SubscriptionStatus.CANCELLED) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      'That subscription is not cancelled',
+    );
+  }
+
+  if (!shape(restaurant).active) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      'That period has already run out. Start it again instead.',
+    );
+  }
+
+  await paymentProvider.resume(restaurant.subscriptionRef);
+
+  return afterProviderChange(
+    restaurantId,
+    restaurant.subscriptionRef,
+    SubscriptionStatus.ACTIVE,
+  );
+};
+
+export const SubscriptionService = {
+  statusFor,
+  start,
+  cancel,
+  resume,
+  billingPortal,
+};

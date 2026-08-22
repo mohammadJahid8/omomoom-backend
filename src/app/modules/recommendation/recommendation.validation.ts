@@ -56,6 +56,11 @@ const listForRestaurant = z.object({
 const listRecent = z.object({
   query: z.object({
     limit: z.coerce.number().int().min(1).max(24).default(6),
+    /** Narrows to one corner of the site, so a themed page stays on theme. */
+    cuisine: z
+      .union([z.string(), z.array(z.string())])
+      .transform((value) => (Array.isArray(value) ? value : [value]))
+      .optional(),
   }),
 });
 

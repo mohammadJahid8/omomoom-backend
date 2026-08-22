@@ -39,7 +39,9 @@ const update = catchAsync(async (req: Request, res: Response) => {
 });
 
 const remove = catchAsync(async (req: Request, res: Response) => {
-  await RestaurantAdminService.remove(req.params.id as string);
+  await RestaurantAdminService.remove(req.params.id as string, {
+    force: req.query.force === 'true',
+  });
   sendResponse(res, { message: 'Restaurant deleted', data: null });
 });
 

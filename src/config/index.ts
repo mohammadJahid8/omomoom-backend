@@ -25,11 +25,6 @@ const envSchema = z.object({
 
   BCRYPT_SALT_ROUNDS: z.coerce.number().int().min(4).max(15).default(12),
 
-  JWT_ACCESS_SECRET: z.string().min(16, 'JWT_ACCESS_SECRET is too short'),
-  JWT_ACCESS_EXPIRES_IN: z.string().default('1d'),
-  JWT_REFRESH_SECRET: z.string().min(16, 'JWT_REFRESH_SECRET is too short'),
-  JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
-
   SESSION_TTL_DAYS: z.coerce.number().int().positive().default(30),
   SESSION_COOKIE_NAME: z.string().default('omomoom_session'),
   /** Blank on localhost so the cookie stays host-only. ".omomoom.com" in production. */
@@ -52,6 +47,15 @@ const envSchema = z.object({
   R2_BUCKET: z.string().optional(),
   /** Where the files are read from: the r2.dev URL, or your own media domain. */
   R2_PUBLIC_URL: z.string().optional(),
+
+  /**
+   * Stripe. Optional so the app boots without them: billing falls back to the
+   * mock provider rather than the server refusing to start.
+   */
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  /** The recurring price the owner plan bills against. `npm run stripe:setup`. */
+  STRIPE_PRICE_ID: z.string().optional(),
 
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
@@ -107,13 +111,6 @@ const config = {
 
   bcryptSaltRounds: env.BCRYPT_SALT_ROUNDS,
 
-  jwt: {
-    accessSecret: env.JWT_ACCESS_SECRET,
-    accessExpiresIn: env.JWT_ACCESS_EXPIRES_IN,
-    refreshSecret: env.JWT_REFRESH_SECRET,
-    refreshExpiresIn: env.JWT_REFRESH_EXPIRES_IN,
-  },
-
   session: {
     ttlDays: env.SESSION_TTL_DAYS,
     cookieName: env.SESSION_COOKIE_NAME,
@@ -129,6 +126,18 @@ const config = {
     clientId: env.GOOGLE_CLIENT_ID,
     clientSecret: env.GOOGLE_CLIENT_SECRET,
     enabled: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
+  },
+
+  stripe: {
+    /** Live billing needs all three. Anything missing and the mock takes over. */
+    enabled: Boolean(
+      env.STRIPE_SECRET_KEY && env.STRIPE_WEBHOOK_SECRET && env.STRIPE_PRICE_ID,
+    ),
+    secretKey: env.STRIPE_SECRET_KEY ?? '',
+    webhookSecret: env.STRIPE_WEBHOOK_SECRET ?? '',
+    priceId: env.STRIPE_PRICE_ID ?? '',
+    /** A test key must never be able to take a real payment, or the reverse. */
+    testMode: (env.STRIPE_SECRET_KEY ?? '').startsWith('sk_test_'),
   },
 
   storage: {

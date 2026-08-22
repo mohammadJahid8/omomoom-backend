@@ -37,7 +37,12 @@ export default tseslint.config(
   },
   {
     // CLI scripts print to the terminal, that is their whole job.
-    files: ['scripts/**/*.ts', 'scripts/**/*.mjs', 'prisma/seed.ts'],
+    files: [
+      'scripts/**/*.ts',
+      'scripts/**/*.mjs',
+      'src/scripts/**/*.ts',
+      'prisma/seed.ts',
+    ],
     languageOptions: {
       globals: { fetch: 'readonly', process: 'readonly', console: 'readonly' },
     },

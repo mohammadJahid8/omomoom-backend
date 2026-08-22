@@ -1,7 +1,7 @@
 import { StatusCodes } from 'http-status-codes';
 
 import ApiError from '../../../errors/ApiError';
-import { RestaurantStatus } from '../../../generated/prisma/enums';
+import { PhotoStatus, RestaurantStatus } from '../../../generated/prisma/enums';
 import prisma from '../../../shared/prisma';
 import type { SessionUser } from '../../../shared/session';
 import {
@@ -19,13 +19,18 @@ const MB = 1024 * 1024;
 /** One ceiling for every image on the site, whatever it is a picture of. */
 export const MAX_IMAGE_BYTES = 3 * MB;
 
+/**
+ * How much one account may leave waiting for a moderator. Not a limit on how
+ * many photos a review can carry, which is unlimited: this is what stops a
+ * script signing uploads all afternoon and filling both the queue and the bill.
+ */
+export const MAX_PENDING_PER_USER = 50;
+
 type Context = { user: SessionUser; restaurantId?: string };
 
 /**
- * Every kind of upload the site allows, in one table. Adding a new one is an
- * entry here plus the route that records the key, never another signing
- * endpoint. `authorise` runs before anything is signed, so a URL is only ever
- * handed to someone entitled to write at that path.
+ * Every kind of upload, in one table. `authorise` runs before signing, so a
+ * URL only ever reaches someone entitled to write at that path.
  */
 const PURPOSES = {
   AVATAR: {
@@ -69,14 +74,26 @@ const PURPOSES = {
     prefix: (ctx: Context) => `community/${ctx.restaurantId}`,
     authorise: async (ctx: Context) => {
       // Anyone signed in may offer a photo of a listing anyone can see. What
-      // stops abuse is that it waits for a person, not who is allowed to try.
-      const restaurant = await prisma.restaurant.findFirst({
-        where: { id: ctx.restaurantId, status: RestaurantStatus.PUBLISHED },
-        select: { id: true },
-      });
+      // stops abuse is that it waits for a person, plus the cap below.
+      const [restaurant, waiting] = await Promise.all([
+        prisma.restaurant.findFirst({
+          where: { id: ctx.restaurantId, status: RestaurantStatus.PUBLISHED },
+          select: { id: true },
+        }),
+        prisma.restaurantPhoto.count({
+          where: { uploadedById: ctx.user.id, status: PhotoStatus.PENDING },
+        }),
+      ]);
 
       if (!restaurant) {
         throw new ApiError(StatusCodes.NOT_FOUND, 'Restaurant not found');
+      }
+
+      if (waiting >= MAX_PENDING_PER_USER) {
+        throw new ApiError(
+          StatusCodes.CONFLICT,
+          `You have ${MAX_PENDING_PER_USER} photos waiting to be checked. Give us a moment to catch up.`,
+        );
       }
     },
   },
@@ -119,12 +136,8 @@ const sign = async (user: SessionUser, input: SignBody) => {
       size: input.size,
     }),
     publicUrl: publicUrlFor(key),
-    /**
-     * Content-Length is signed as well, but a browser refuses to let script
-     * set it and fills it in from the body instead. That works in our favour:
-     * the value cannot be faked, so the size limit holds even though only one
-     * header is handed back here.
-     */
+    // Content-Length is signed too, but the browser sets it and will not let
+    // script override it, which is exactly why the size limit holds.
     headers: { 'Content-Type': input.contentType },
   };
 };

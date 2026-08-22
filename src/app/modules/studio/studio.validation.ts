@@ -6,11 +6,9 @@ const text = (max: number) =>
 const link = z.url('Enter a full URL starting with https://').max(500).nullish().or(z.literal(''));
 
 /**
- * The owner's surface, deliberately narrower than the admin one. Name, status,
- * neighbourhood and Michelin are missing on purpose: a restaurant should not be
- * able to rename itself out of its own reviews, hide itself from search, or
- * award itself a star.
- */
+  * Narrower than the admin surface on purpose. No name, status, neighbourhood
+  * or Michelin: a restaurant cannot rename itself out of its own reviews.
+  */
 const update = z.object({
   body: z.object({
     // Hours & contact

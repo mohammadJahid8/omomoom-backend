@@ -72,7 +72,8 @@ const detailSelect = {
   photos: {
     where: { status: PhotoStatus.APPROVED },
     select: { id: true, url: true, blurhash: true, caption: true, role: true },
-    orderBy: { sortOrder: 'asc' },
+    // Community photos all share one sort value, so the tiebreak decides them.
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
   },
   tags: {
     select: {

@@ -7,7 +7,9 @@ import {
   PhotoStatus,
 } from '../../../generated/prisma/enums';
 import prisma from '../../../shared/prisma';
+
 import type { SessionUser } from '../../../shared/session';
+import { isAdmin } from '../../middlewares/auth';
 import { describeObject, publicUrlFor, removeObject } from '../../../shared/storage';
 
 import type { PhotoBody, PhotoOrderBody, PhotoPatchBody } from './studio.validation';
@@ -15,6 +17,13 @@ import { assertPaid } from './studio.service';
 
 /** Enough for a rich page, few enough that the gallery stays quick to load. */
 export const MAX_PHOTOS = 24;
+
+/**
+ * The Studio manages the restaurant's own photos. A guest's photo appears on
+ * the same page but is not the owner's to delete, reorder, or promote to the
+ * cover: the listing is theirs, what people thought of it is not.
+ */
+const OWNED_BY_LISTING = { not: PhotoSource.USER } as const;
 
 const photoSelect = {
   id: true,
@@ -29,15 +38,26 @@ const photoSelect = {
 } as const;
 
 const list = async (restaurantId: string) => {
-  const [photos, restaurant] = await Promise.all([
+  const [photos, restaurant, fromGuests] = await Promise.all([
     prisma.restaurantPhoto.findMany({
-      where: { restaurantId, status: PhotoStatus.APPROVED },
+      where: {
+        restaurantId,
+        status: PhotoStatus.APPROVED,
+        source: OWNED_BY_LISTING,
+      },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       select: photoSelect,
     }),
     prisma.restaurant.findUnique({
       where: { id: restaurantId },
       select: { coverPhotoId: true },
+    }),
+    prisma.restaurantPhoto.count({
+      where: {
+        restaurantId,
+        status: PhotoStatus.APPROVED,
+        source: PhotoSource.USER,
+      },
     }),
   ]);
 
@@ -47,28 +67,26 @@ const list = async (restaurantId: string) => {
       isCover: photo.id === restaurant?.coverPhotoId,
     })),
     max: MAX_PHOTOS,
+    fromGuests,
   };
 };
 
-/**
- * The key came from the browser, so none of it is trusted: it has to sit under
- * this restaurant's own prefix, the object has to actually exist, and it must
- * not already be attached to something. Otherwise a key could be guessed,
- * borrowed from another listing, or committed twice.
- */
+/** The key came from the browser, so every part of it is checked. */
 const add = async (
   user: SessionUser,
   restaurantId: string,
   input: PhotoBody,
 ) => {
-  await assertPaid(restaurantId);
+  await assertPaid(restaurantId, user);
 
   if (!input.key.startsWith(`restaurants/${restaurantId}/`)) {
     throw new ApiError(StatusCodes.FORBIDDEN, 'That upload is not yours');
   }
 
   const [count, duplicate] = await Promise.all([
-    prisma.restaurantPhoto.count({ where: { restaurantId } }),
+    prisma.restaurantPhoto.count({
+      where: { restaurantId, source: OWNED_BY_LISTING },
+    }),
     prisma.restaurantPhoto.findFirst({
       where: { storageKey: input.key },
       select: { id: true },
@@ -79,7 +97,8 @@ const add = async (
     throw new ApiError(StatusCodes.CONFLICT, 'That photo was already added');
   }
 
-  if (count >= MAX_PHOTOS) {
+  // An admin is filling the catalogue, not spending one listing's allowance.
+  if (!isAdmin(user.role) && count >= MAX_PHOTOS) {
     throw new ApiError(
       StatusCodes.CONFLICT,
       `You can have up to ${MAX_PHOTOS} photos. Remove one first.`,
@@ -137,11 +156,18 @@ const add = async (
 async function owned(restaurantId: string, photoId: string) {
   const photo = await prisma.restaurantPhoto.findUnique({
     where: { id: photoId },
-    select: { id: true, restaurantId: true, storageKey: true },
+    select: { id: true, restaurantId: true, storageKey: true, source: true },
   });
 
   if (!photo || photo.restaurantId !== restaurantId) {
     throw new ApiError(StatusCodes.NOT_FOUND, 'Photo not found');
+  }
+
+  if (photo.source === PhotoSource.USER) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      'That photo was taken by a guest, so it is not yours to change',
+    );
   }
 
   return photo;
@@ -177,8 +203,9 @@ const update = async (
   restaurantId: string,
   photoId: string,
   input: PhotoPatchBody,
+  actor: SessionUser,
 ) => {
-  await assertPaid(restaurantId);
+  await assertPaid(restaurantId, actor);
   await owned(restaurantId, photoId);
 
   if (input.caption !== undefined) {
@@ -193,13 +220,13 @@ const update = async (
   return list(restaurantId);
 };
 
-/**
- * The row and the file go together. Unsetting the cover first matters: the
- * restaurant holds a foreign key to it, and deleting the row underneath that
- * would fail.
- */
-const remove = async (restaurantId: string, photoId: string) => {
-  await assertPaid(restaurantId);
+/** Row and file together. The cover is unset first, or the foreign key blocks it. */
+const remove = async (
+  restaurantId: string,
+  photoId: string,
+  actor: SessionUser,
+) => {
+  await assertPaid(restaurantId, actor);
   const photo = await owned(restaurantId, photoId);
 
   const restaurant = await prisma.restaurant.findUnique({
@@ -221,7 +248,11 @@ const remove = async (restaurantId: string, photoId: string) => {
   // Losing the cover should not leave the listing without one.
   if (restaurant?.coverPhotoId === photoId) {
     const next = await prisma.restaurantPhoto.findFirst({
-      where: { restaurantId, status: PhotoStatus.APPROVED },
+      where: {
+        restaurantId,
+        status: PhotoStatus.APPROVED,
+        source: OWNED_BY_LISTING,
+      },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       select: { id: true },
     });
@@ -232,11 +263,15 @@ const remove = async (restaurantId: string, photoId: string) => {
   return list(restaurantId);
 };
 
-const reorder = async (restaurantId: string, input: PhotoOrderBody) => {
-  await assertPaid(restaurantId);
+const reorder = async (
+  restaurantId: string,
+  input: PhotoOrderBody,
+  actor: SessionUser,
+) => {
+  await assertPaid(restaurantId, actor);
 
   const mine = await prisma.restaurantPhoto.findMany({
-    where: { restaurantId },
+    where: { restaurantId, source: OWNED_BY_LISTING },
     select: { id: true },
   });
 

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import {
   DeleteObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -10,12 +11,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 import config from '../config';
 
-/**
- * Cloudflare R2 speaks the S3 protocol, so nothing here is Cloudflare specific.
- * Point the endpoint at another provider and the rest of the app does not
- * notice, which is the reason for choosing it: the frontend moves to a VPS
- * later and this layer is meant to survive that.
- */
+/** Plain S3 protocol, so the provider can change without touching callers. */
 const client = config.storage.enabled
   ? new S3Client({
       region: 'auto',
@@ -41,11 +37,7 @@ export const IMAGE_TYPES = Object.keys(EXTENSIONS);
 export const extensionFor = (contentType: string) =>
   EXTENSIONS[contentType] ?? 'bin';
 
-/**
- * Keys are random and never reused. Overwriting an existing object would mean
- * fighting a CDN cache for a photo somebody already has in their browser;
- * writing a new key and deleting the old one never has that problem.
- */
+/** Random and never reused, so a replaced photo never fights a CDN cache. */
 export const buildKey = (prefix: string, contentType: string) =>
   `${prefix}/${randomUUID()}.${extensionFor(contentType)}`;
 
@@ -61,12 +53,7 @@ export const isOurs = (url: string | null): boolean =>
 export const keyFromUrl = (url: string): string | null =>
   isOurs(url) ? url.slice(config.storage.publicBaseUrl.length + 1) : null;
 
-/**
- * The browser uploads straight to storage, so a large file never occupies a
- * request on our own server. Signing `ContentType` and `ContentLength` is what
- * makes the limits real: a client that sends something other than what it
- * declared gets a signature mismatch from R2, not a pass.
- */
+/** Signing type and length is what makes those limits real rather than advisory. */
 export const presignUpload = async (input: {
   key: string;
   contentType: string;
@@ -110,7 +97,7 @@ export const describeObject = async (
   }
 };
 
-/** Best effort. A file left behind costs a fraction of a cent; a failed request costs a user their change. */
+/** Best effort: a stray file is cheaper than a failed request. */
 export const removeObject = async (key: string): Promise<void> => {
   if (!client) return;
 
@@ -121,4 +108,36 @@ export const removeObject = async (key: string): Promise<void> => {
   } catch {
     // ignored on purpose
   }
+};
+
+export type StoredObject = { key: string; size: number; uploadedAt: Date };
+
+/** Walks the whole prefix, a page at a time, so a large bucket stays bounded. */
+export const listObjects = async function* (
+  prefix: string,
+): AsyncGenerator<StoredObject> {
+  if (!client) return;
+
+  let token: string | undefined;
+
+  do {
+    const page = await client.send(
+      new ListObjectsV2Command({
+        Bucket: config.storage.bucket,
+        Prefix: prefix,
+        ContinuationToken: token,
+      }),
+    );
+
+    for (const item of page.Contents ?? []) {
+      if (!item.Key) continue;
+      yield {
+        key: item.Key,
+        size: item.Size ?? 0,
+        uploadedAt: item.LastModified ?? new Date(0),
+      };
+    }
+
+    token = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (token);
 };

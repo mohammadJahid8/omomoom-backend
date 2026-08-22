@@ -90,11 +90,7 @@ const queue = async (query: QueueQuery) => {
   };
 };
 
-/**
- * Rejecting deletes the file as well as hiding the row. Keeping a copy of
- * something we have just judged unacceptable serves nobody, and the record of
- * the decision survives in the row itself.
- */
+/** Rejecting deletes the file too; the decision survives on the row. */
 const decide = async (
   actor: SessionUser,
   photoId: string,

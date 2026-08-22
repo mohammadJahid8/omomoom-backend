@@ -2,8 +2,11 @@ import { StatusCodes } from 'http-status-codes';
 
 import ApiError from '../../../errors/ApiError';
 import type { Prisma } from '../../../generated/prisma/client';
-import { SubscriptionStatus } from '../../../generated/prisma/enums';
+import { type SubscriptionStatus } from '../../../generated/prisma/enums';
 import prisma from '../../../shared/prisma';
+import { isSubscriptionActive } from '../subscription/subscription.sync';
+import type { SessionUser } from '../../../shared/session';
+import { isAdmin } from '../../middlewares/auth';
 
 import type { StudioUpdateBody } from './studio.validation';
 
@@ -44,17 +47,9 @@ const studioSelect = {
   updatedAt: true,
 } as const;
 
-const isPaid = (row: {
-  subscriptionStatus: SubscriptionStatus;
-  subscribedUntil: Date | null;
-}) =>
-  row.subscriptionStatus === SubscriptionStatus.ACTIVE ||
-  (row.subscriptionStatus === SubscriptionStatus.CANCELLED &&
-    Boolean(row.subscribedUntil && row.subscribedUntil > new Date()));
-
 const shape = <T extends { subscriptionStatus: SubscriptionStatus; subscribedUntil: Date | null }>(
   row: T,
-) => ({ ...row, subscriptionActive: isPaid(row) });
+) => ({ ...row, subscriptionActive: isSubscriptionActive(row) });
 
 const get = async (restaurantId: string) => {
   const restaurant = await prisma.restaurant.findUnique({
@@ -72,8 +67,14 @@ const get = async (restaurantId: string) => {
 const blank = (value: unknown) =>
   value === '' || value === null ? null : (value as string);
 
-/** The paywall, in one place, for every write the Studio makes. */
-export const assertPaid = async (restaurantId: string) => {
+/**
+ * The paywall, in one place, for every write the Studio makes. Admins pass:
+ * they are curating the site, not buying a listing, and a restaurant with no
+ * subscription still needs someone able to fix it.
+ */
+export const assertPaid = async (restaurantId: string, actor: SessionUser) => {
+  if (isAdmin(actor.role)) return;
+
   const existing = await prisma.restaurant.findUnique({
     where: { id: restaurantId },
     select: { id: true, subscriptionStatus: true, subscribedUntil: true },
@@ -83,7 +84,7 @@ export const assertPaid = async (restaurantId: string) => {
     throw new ApiError(StatusCodes.NOT_FOUND, 'Restaurant not found');
   }
 
-  if (!isPaid(existing)) {
+  if (!isSubscriptionActive(existing)) {
     throw new ApiError(
       StatusCodes.PAYMENT_REQUIRED,
       'Start your subscription to edit this listing',
@@ -91,8 +92,12 @@ export const assertPaid = async (restaurantId: string) => {
   }
 };
 
-const update = async (restaurantId: string, input: StudioUpdateBody) => {
-  await assertPaid(restaurantId);
+const update = async (
+  restaurantId: string,
+  input: StudioUpdateBody,
+  actor: SessionUser,
+) => {
+  await assertPaid(restaurantId, actor);
 
   const data: Prisma.RestaurantUncheckedUpdateInput = {};
 

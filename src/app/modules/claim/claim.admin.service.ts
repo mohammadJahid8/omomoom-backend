@@ -208,11 +208,7 @@ async function loadForDecision(id: string) {
   return claim;
 }
 
-/**
- * Approving adds an owner rather than replacing one. Two managers of the same
- * restaurant is a normal thing; taking the keys off the wrong person is a
- * separate, deliberate act: see revoke.
- */
+/** Adds an owner rather than replacing one. Removing one is revoke, below. */
 const decide = async (
   actor: SessionUser,
   id: string,
@@ -276,11 +272,7 @@ const decide = async (
   return approved;
 };
 
-/**
- * The undo. Ownership goes back, the approved claim stops saying otherwise,
- * and billing stops: keeping a subscription running against someone we have
- * just decided is not the owner would be indefensible.
- */
+/** The undo: ownership back, claim corrected, and billing stopped. */
 const revoke = async (actor: SessionUser, input: AdminRevokeBody) => {
   const link = await prisma.restaurantOwner.findUnique({
     where: {
@@ -325,7 +317,9 @@ const revoke = async (actor: SessionUser, input: AdminRevokeBody) => {
   });
 
   if (remaining === 0 && paying) {
-    await paymentProvider.cancel(link.restaurant.subscriptionRef);
+    // Not at the period end: they have lost the listing already, so there is
+    // nothing left for them to be paying for.
+    await paymentProvider.cancelNow(link.restaurant.subscriptionRef);
   }
 
   await prisma.$transaction([

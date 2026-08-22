@@ -5,7 +5,6 @@ import type {
   Response,
 } from 'express';
 import { StatusCodes } from 'http-status-codes';
-import { JsonWebTokenError, TokenExpiredError } from 'jsonwebtoken';
 import { ZodError } from 'zod';
 
 import config from '../../config';
@@ -51,14 +50,6 @@ const globalErrorHandler: ErrorRequestHandler = (
     statusCode = simplified.statusCode;
     message = simplified.message;
     errorDetails = simplified.errorDetails;
-  } else if (error instanceof TokenExpiredError) {
-    statusCode = StatusCodes.UNAUTHORIZED;
-    message = 'Session expired, please log in again';
-    errorDetails = [{ path: '', message: 'JWT token expired' }];
-  } else if (error instanceof JsonWebTokenError) {
-    statusCode = StatusCodes.UNAUTHORIZED;
-    message = 'Invalid authentication token';
-    errorDetails = [{ path: '', message: 'JWT token is malformed' }];
   } else if (error instanceof ApiError) {
     statusCode = error.statusCode;
     message = error.message;
